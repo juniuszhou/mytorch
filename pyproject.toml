@@ -5,9 +5,17 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
+    "datasets>=4.8.5",
     "matplotlib>=3.10.9",
     "transformers>=5.9.0",
 ]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
 
 [tool.ruff]
 format.preview = true

@@ -2,7 +2,7 @@ from huggingface_hub import login
 
 
 def read_env():
-    with open("../.env", "r") as f:
+    with open("../../.env", "r") as f:
         for line in f:
             if line.startswith("#"):
                 continue
@@ -15,4 +15,4 @@ def read_env():
 
 def login_huggingface():
     token = read_env()
-    login(new_session=True, token=token)
+    login(token=token)
