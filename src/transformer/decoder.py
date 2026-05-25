@@ -101,7 +101,7 @@ class FeedForward(nn.Module):
         return self.linear2(self.dropout(F.relu(self.linear1(x))))
 
 
-class TransformerEncoderLayer(nn.Module):
+class TransformerDecoderLayer(nn.Module):
     def __init__(
         self, d_model: int, n_heads: int, d_ff: int = 2048, dropout: float = 0.1
     ):
@@ -113,18 +113,23 @@ class TransformerEncoderLayer(nn.Module):
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x, mask=None):
-        # Self Attention + Residual + Norm
+        # Masked self-attention: each token only attends to itself and past tokens.
         attn_output = self.self_attn(x, x, x, mask)
         x = self.norm1(x + self.dropout(attn_output))
 
-        # Feed Forward + Residual + Norm
         ff_output = self.ff(x)
         x = self.norm2(x + self.dropout(ff_output))
 
         return x
 
 
-class SimpleTransformer(nn.Module):
+def generate_causal_mask(seq_len: int, device: torch.device) -> torch.Tensor:
+    return torch.tril(torch.ones(seq_len, seq_len, device=device)).view(
+        1, 1, seq_len, seq_len
+    )
+
+
+class SimpleDecoder(nn.Module):
     def __init__(
         self,
         vocab_size: int,
@@ -142,7 +147,7 @@ class SimpleTransformer(nn.Module):
         self.dropout = nn.Dropout(dropout)
 
         self.layers = nn.ModuleList([
-            TransformerEncoderLayer(d_model, n_heads, d_ff, dropout)
+            TransformerDecoderLayer(d_model, n_heads, d_ff, dropout)
             for _ in range(n_layers)
         ])
 
@@ -153,6 +158,9 @@ class SimpleTransformer(nn.Module):
         x = self.embedding(x) * math.sqrt(self.embedding.embedding_dim)
         x = self.pos_encoding(x)
         x = self.dropout(x)
+
+        if mask is None:
+            mask = generate_causal_mask(x.size(1), x.device)
 
         for layer in self.layers:
             x = layer(x, mask)
@@ -165,26 +173,17 @@ class SimpleTransformer(nn.Module):
 # ====================== DATASET ======================
 class ShakespeareDataset(Dataset):
     def __init__(self, text, block_size=128, device=None):
-        self.tokenizer = Tokenizer()
         self.block_size = block_size
-        # self.chars = sorted(list(set(text)))
-        self.vocab_size = self.tokenizer.vocab_size
-
-        # self.char2idx = {ch: i for i, ch in enumerate(self.chars)}
-        # self.idx2char = {i: ch for i, ch in enumerate(self.chars)}
-        # self.data = torch.tensor([self.char2idx[ch] for ch in text], dtype=torch.long)
-
-        self.data = self.tokenizer(
-            text, return_tensors="pt", padding=True, truncation=True
-        )["input_ids"]
-
-        self.data = self.data[: self.data.shape[0] // 10, : self.data.shape[1] // 10]
-
+        self.chars = sorted(list(set(text)))
+        self.vocab_size = len(self.chars)
+        self.char2idx = {ch: i for i, ch in enumerate(self.chars)}
+        self.idx2char = {i: ch for i, ch in enumerate(self.chars)}
+        self.data = torch.tensor([self.char2idx[ch] for ch in text], dtype=torch.long)
         if device is not None:
             self.data = self.data.to(device)
 
     def __len__(self):
-        return (len(self.data) - self.block_size) // 20
+        return len(self.data) - self.block_size
 
     def __getitem__(self, idx):
         chunk = self.data[idx : idx + self.block_size + 1]
@@ -196,14 +195,14 @@ class ShakespeareDataset(Dataset):
 # ====================== TRAINING ======================
 def train():
     # Hyperparameters
-    batch_size = 16
+    batch_size = 64
     block_size = 128
     d_model = 16
-    n_heads = 2
-    n_layers = 1
+    n_heads = 4
+    n_layers = 2
     epochs = 10
     lr = 3e-4
-    device = "cuda"
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # Load dataset
     print("Loading Tiny Shakespeare dataset...")
@@ -220,7 +219,7 @@ def train():
     )
 
     # Model
-    model = SimpleTransformer(
+    model = SimpleDecoder(
         vocab_size=shakespeare.vocab_size,
         d_model=d_model,
         n_heads=n_heads,
@@ -249,8 +248,6 @@ def train():
             loss = criterion(output.view(-1, shakespeare.vocab_size), y.view(-1))
 
             loss.backward()
-            # 把所有参数的梯度拼在一起，算一个 总范数（L2 norm）
-            # 如果这个范数 > 0.5，就把所有梯度 等比例缩小，让总范数刚好等于 0.5
             torch.nn.utils.clip_grad_norm_(model.parameters(), 0.5)  # Gradient clipping
             optimizer.step()
 
@@ -261,10 +258,10 @@ def train():
         print(f"Epoch {epoch + 1} | Avg Loss: {avg_loss:.4f}")
 
         # Generate sample text Cheap sanity check, to see if the model is learning and can generate meaningful text.
-        # if (epoch + 1) % 2 == 0:
-        print("\n--- Generated Sample ---")
-        generate_text(model, shakespeare, device, max_new_tokens=300)
-        print("------------------------\n")
+        if (epoch + 1) % 2 == 0:
+            print("\n--- Generated Sample ---")
+            generate_text(model, shakespeare, device, max_new_tokens=300)
+            print("------------------------\n")
 
     # Save model
     torch.save(
@@ -273,7 +270,7 @@ def train():
             "char2idx": shakespeare.char2idx,
             "idx2char": shakespeare.idx2char,
         },
-        "simple_transformer_shakespeare.pth",
+        "simple_decoder_shakespeare.pth",
     )
     print("Training completed and model saved!")
 

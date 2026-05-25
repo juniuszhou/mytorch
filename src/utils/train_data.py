@@ -1,17 +1,22 @@
-from datasets import load_dataset
+import os
 
-SHAKESPEARE_URL = (
-    "https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt"
-)
+from datasets import load_dataset, load_from_disk
+
+SHAKESPEARE_URL = "https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt"
 
 
 def load_shakespeare_text() -> str:
     """Load Tiny Shakespeare without deprecated dataset loading scripts."""
-    dataset = load_dataset(
-        "text",
-        data_files={"train": SHAKESPEARE_URL},
-        split="train",
-    )
+    if os.path.exists("data/tiny_shakespeare"):
+        dataset = load_from_disk("data/tiny_shakespeare")
+        return "\n".join(dataset["text"])
+    else:
+        dataset = load_dataset(
+            "text",
+            data_files={"train": SHAKESPEARE_URL},
+            split="train",
+        )
+        dataset.save_to_disk("data/tiny_shakespeare")
     return "\n".join(dataset["text"])
 
 
