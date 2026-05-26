@@ -1,3 +1,5 @@
+"""works now"""
+
 import math
 
 import torch
@@ -203,12 +205,7 @@ def train():
     # Create dataset and dataloader
     shakespeare = ShakespeareDataset(text, block_size=block_size, device=device)
     print(f"Dataset loaded on {shakespeare.data.device}")
-    dataloader = DataLoader(
-        shakespeare,
-        batch_size=batch_size,
-        shuffle=True,
-        num_workers=0 if device.type == "cuda" else 2,
-    )
+    dataloader = DataLoader(shakespeare, batch_size=batch_size, shuffle=True)
 
     # Model
     model = SimpleTransformer(

@@ -49,56 +49,73 @@ class MultiHeadAttention(nn.Module):
 
         self.d_model = d_model
         self.n_heads = n_heads
+
+        # d_k 是 d_model 除以 n_heads，得到每个头的大小
         self.d_k = d_model // n_heads
 
         self.W_q = nn.Linear(d_model, d_model)
         self.W_k = nn.Linear(d_model, d_model)
         self.W_v = nn.Linear(d_model, d_model)
+        # Output Projection（输出投影）
         self.W_o = nn.Linear(d_model, d_model)
 
         self.dropout = nn.Dropout(dropout)
 
+    # query key value are the same input in self-attention
     def forward(self, query, key, value, mask=None):
         batch_size = query.size(0)
 
-        # Linear projections
+        # Linear projections, x * W_q, x * W_k, x * W_v
         Q = self.W_q(query)  # (batch, seq_len, d_model)
         K = self.W_k(key)
         V = self.W_v(value)
 
         # Split into heads
+        # Q shape: (batch, n_heads, seq_len, d_k) after view
         Q = Q.view(batch_size, -1, self.n_heads, self.d_k).transpose(1, 2)
         K = K.view(batch_size, -1, self.n_heads, self.d_k).transpose(1, 2)
         V = V.view(batch_size, -1, self.n_heads, self.d_k).transpose(1, 2)
 
         # Scaled Dot-Product Attention
+        # scores 的shape 是 (batch, n_heads, seq_len, seq_len)
         scores = torch.matmul(Q, K.transpose(-2, -1)) / math.sqrt(self.d_k)
 
         if mask is not None:
+            # 对于 (seq_len, seq_len) 来做 mask
             scores = scores.masked_fill(mask == 0, float("-inf"))
 
+        # Softmax 在 Attention 层中也是在最后一个维度进行归一化
         attn = F.softmax(scores, dim=-1)
         attn = self.dropout(attn)
 
+        # context 的shape 是 (batch, n_heads, seq_len, d_k)
         context = torch.matmul(attn, V)
 
         # Concatenate heads
+        # 对第2个维度进行拼接，得到 (batch, seq_len, d_model)
+        # contiguous 提高 view 操作的效率，避免在 view 操作时，tensor 不连续，导致性能下降。
         context = (
             context.transpose(1, 2).contiguous().view(batch_size, -1, self.d_model)
         )
 
+        # 最后返回的值的是 (batch, seq_len, d_model)
         return self.W_o(context)
 
 
 class FeedForward(nn.Module):
     def __init__(self, d_model: int, d_ff: int = 2048, dropout: float = 0.1):
         super().__init__()
+        # 把模型扩大4倍，中间维度，让模型有更多的表达能力
         self.linear1 = nn.Linear(d_model, d_ff)
+        # 激活函数，让模型不在是线性的
+        self.activation = nn.GELU()  # GELU is a smooth activation function that is similar to ReLU, but has a smoother gradient.
+        # 把模型缩小到原来的维度，输出到原来的shape
         self.linear2 = nn.Linear(d_ff, d_model)
+        # 防止过拟合
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x):
-        return self.linear2(self.dropout(F.relu(self.linear1(x))))
+        return self.linear2(self.dropout(self.activation(self.linear1(x))))
 
 
 class TransformerEncoderLayer(nn.Module):
@@ -119,7 +136,10 @@ class TransformerEncoderLayer(nn.Module):
 
         # Feed Forward + Residual + Norm
         ff_output = self.ff(x)
-        x = self.norm2(x + self.dropout(ff_output))
+        # Residual connection, 训练的结果加上原来的输入，得到新的结果。这样训练更稳定，不容易出现梯度消失或爆炸。
+        x = x + self.dropout(ff_output)
+        # Normalization LayerNorm 是沿着「特征维度」（通常是 tensor 的 最后一个维度）进行归一化的
+        x = self.norm2(x)
 
         return x
 
@@ -164,11 +184,11 @@ class SimpleTransformer(nn.Module):
 
 # ====================== DATASET ======================
 class ShakespeareDataset(Dataset):
-    def __init__(self, text, block_size=128, device=None):
+    def __init__(self, text, block_size=128, device="cuda"):
         self.tokenizer = Tokenizer()
         self.block_size = block_size
         # self.chars = sorted(list(set(text)))
-        self.vocab_size = self.tokenizer.vocab_size
+        self.vocab_size = self.tokenizer.tokenizer.vocab_size
 
         # self.char2idx = {ch: i for i, ch in enumerate(self.chars)}
         # self.idx2char = {i: ch for i, ch in enumerate(self.chars)}
