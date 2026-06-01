@@ -6,6 +6,9 @@ data/
 # C extensions
 *.so
 
+src/cs336/
+src/minimind/
+
 # Distribution / packaging
 .Python
 build/
