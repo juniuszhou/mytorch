@@ -4,12 +4,12 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import optim
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import Dataset
 from tqdm import tqdm
 from transformers import AutoTokenizer
 
 from utils.login import login_huggingface
-from utils.train_data import load_shakespeare_text
+from utils.train_data import get_shakespeare_data_loader, get_shakespeare_dataset
 
 login_huggingface()
 
@@ -184,39 +184,29 @@ class SimpleTransformer(nn.Module):
 
 # ====================== DATASET ======================
 class ShakespeareDataset(Dataset):
-    def __init__(self, text, block_size=128, device="cuda"):
+    def __init__(self, dataset, block_size=128, device="cuda"):
         self.tokenizer = Tokenizer()
         self.block_size = block_size
-        # self.chars = sorted(list(set(text)))
-        self.vocab_size = self.tokenizer.tokenizer.vocab_size
 
-        # self.char2idx = {ch: i for i, ch in enumerate(self.chars)}
-        # self.idx2char = {i: ch for i, ch in enumerate(self.chars)}
-        # self.data = torch.tensor([self.char2idx[ch] for ch in text], dtype=torch.long)
-
-        self.data = self.tokenizer(
-            text, return_tensors="pt", padding=True, truncation=True
-        )["input_ids"]
-
-        self.data = self.data[: self.data.shape[0] // 10, : self.data.shape[1] // 10]
-
-        if device is not None:
-            self.data = self.data.to(device)
+        self.data = dataset
 
     def __len__(self):
         return (len(self.data) - self.block_size) // 20
 
     def __getitem__(self, idx):
-        chunk = self.data[idx : idx + self.block_size + 1]
-        x = chunk[:-1]
-        y = chunk[1:]
+        sample = self.data[idx : idx + self.block_size + 1]
+        print("sample: ", sample)
+
+        idx = self.tokenizer(sample).input_ids
+        x = torch.tensor(idx[:-1], dtype=torch.long)
+        y = torch.tensor(idx[1:], dtype=torch.long)
         return x, y
 
 
 # ====================== TRAINING ======================
 def train():
     # Hyperparameters
-    batch_size = 16
+    # batch_size = 16
     block_size = 128
     d_model = 16
     n_heads = 2
@@ -227,17 +217,12 @@ def train():
 
     # Load dataset
     print("Loading Tiny Shakespeare dataset...")
-    text = load_shakespeare_text()
+    dataset = get_shakespeare_dataset()
 
     # Create dataset and dataloader
-    shakespeare = ShakespeareDataset(text, block_size=block_size, device=device)
-    print(f"Dataset loaded on {shakespeare.data.device}")
-    dataloader = DataLoader(
-        shakespeare,
-        batch_size=batch_size,
-        shuffle=True,
-        num_workers=0 if device.type == "cuda" else 2,
-    )
+    shakespeare = ShakespeareDataset(dataset, block_size=block_size, device=device)
+    # print(f"Dataset loaded on {shakespeare.data.device}")
+    dataloader = get_shakespeare_data_loader()
 
     # Model
     model = SimpleTransformer(
@@ -323,3 +308,17 @@ def generate_text(model, dataset, device, max_new_tokens=300, temperature=0.8):
 
 if __name__ == "__main__":
     train()
+    # device = "cuda"
+    # block_size = 128
+    # batch_size = 16
+    # epochs = 2
+
+    # # Load dataset
+    # dataloader = get_shakespeare_data_loader()
+
+    # for epoch in range(epochs):
+    #     total_loss = 0
+    #     for i, batch in enumerate(dataloader):
+    #         print(batch.shape)
+    #         print(batch)
+    #         break

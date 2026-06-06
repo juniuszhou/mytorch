@@ -28,19 +28,26 @@ class Tokenizer(nn.Module):
 class PositionalEncoding(nn.Module):
     def __init__(self, d_model: int, max_len: int = 5000):
         super().__init__()
+        # (max_len, 1)
         position = torch.arange(max_len).unsqueeze(1)
+        # (d_model // 2, )
         div_term = torch.exp(
             torch.arange(0, d_model, 2) * (-math.log(10000.0) / d_model)
         )
 
+        # position embedding
         pe = torch.zeros(max_len, 1, d_model)
+        # shape of position * div_term is (max_len, d_model // 2)
         pe[:, 0, 0::2] = torch.sin(position * div_term)
         pe[:, 0, 1::2] = torch.cos(position * div_term)
+        # keep pe as a buffer, so it won't be updated during backward pass
         self.register_buffer("pe", pe)
 
     def forward(self, x):
         # x shape: (batch_size, seq_len, d_model)
-        x = x + self.pe[: x.size(1)].transpose(0, 1)
+        # cut pe to the same length as x, then transpose it to (1, seq_len, d_model)
+        # after it, the shape of low 2 dimensions are the same, so we can add them together with broadcasting
+        x = x + self.pe[: x.size(1), 0, :].transpose(0, 1)
         return x
 
 

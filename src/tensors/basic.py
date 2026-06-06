@@ -8,9 +8,14 @@ def tensor_demo():
         device=torch.device("cuda:0"),
         dtype=torch.float16,
     )
+
+    print("a", a.transpose(0, 1))
+
     a.retain_grad()
     b = a * 2
     b.retain_grad()
+
+    print("b", a.matmul(b))
 
     c = (a + 1 + b) * 2
     c.retain_grad()
