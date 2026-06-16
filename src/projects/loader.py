@@ -7,7 +7,7 @@ import numpy as np
 import torch
 from datasets import load_dataset
 from torch.utils.data import DataLoader, Dataset
-from transformers import AutoTokenizer, PreTrainedTokenizerBase
+from transformers import PreTrainedTokenizerBase
 
 TEXT_KEYS = ("text", "content", "input", "prompt", "sentence")
 LABEL_KEYS = ("label", "labels", "target", "category", "class")
@@ -27,15 +27,12 @@ class PretrainDataset(Dataset):
     def __init__(
         self,
         data_path: str | Path,
-        tokenizer: PreTrainedTokenizerBase | str,
+        tokenizer: PreTrainedTokenizerBase,
         max_length: int = 512,
     ):
         super().__init__()
-        self.tokenizer = (
-            AutoTokenizer.from_pretrained(tokenizer)
-            if isinstance(tokenizer, str)
-            else tokenizer
-        )
+        self.tokenizer = tokenizer
+
         self.max_length = max_length
         self.samples = load_dataset("json", data_files=data_path, split="train")
         print("len(self.samples): ", len(self.samples))
@@ -98,16 +95,21 @@ class PretrainDataLoader(DataLoader):
         )
 
 
-if __name__ == "__main__":
-    dataset_path = "data/train.jsonl"
-    tokenizer = "bert-base-uncased"
-    dataset = PretrainDataset(dataset_path, tokenizer)
-    epoch = 1
-    dataloader = PretrainDataLoader(dataset, batch_size=16, num_workers=0)
-    index = 0
-    for batch in dataloader:
-        input_ids, labels = batch
+# def main():
+#     tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
+#     dataset_path = "data/train.jsonl"
+#     dataset = PretrainDataset(dataset_path, tokenizer)
+#     dataloader = PretrainDataLoader(dataset, batch_size=16, num_workers=0)
+#     embed = nn.Embedding(tokenizer.vocab_size, 1024)
+#     index = 0
+#     for batch in dataloader:
+#         input_ids, labels = batch
+#         x = embed(input_ids)
+#         print("x: ", x.shape)
+#         index += 1
+#         if index > 10:
+#             break
 
-        index += 1
-        if index > 10:
-            break
+
+# if __name__ == "__main__":
+#     main()
