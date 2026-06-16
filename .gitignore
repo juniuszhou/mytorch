@@ -8,6 +8,8 @@ data/
 
 src/cs336/
 src/minimind/
+src/karpathy/
+src/cs249r_book/
 
 # Distribution / packaging
 .Python

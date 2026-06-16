@@ -175,6 +175,13 @@ Multihead = (n * d) 回到和X一样的维度，它又作为下一层的输入�
 
 
 
+### 在attention计算使用了Rope，还需要在embedding里面加位置信息吗
+通常是不需要的，现代的模型实现，基本没有在embedding加位置信息了。而是使用rope
+它能更好的反应相对位置。对于多头，它是在一个头里面的相对位置。
+
+### FF里面通常使用4倍的特征进行扩展
+它是有数学支持的，4倍可以让它在更高维的空间学习特征。
+
 ### 
 为什么需要 FeedForward？（重要性）
 
@@ -193,3 +200,92 @@ Multihead = (n * d) 回到和X一样的维度，它又作为下一层的输入�
 可解释性输出的 Attention Weights 可以直接理解为“这个 token 对当前 token 的注意力比例”。数值稳定配合 Scaling 操作，防止梯度爆炸或消失。
 
 Softmax 在 Attention 层中也是在最后一个维度进行归一化
+
+### pre layer normalization or post normalization
+现在的模型都是选择 pre normalization。更加稳定
+Post-LN 随着模型层数的加深，方差会逐层累计，导致靠近输出层的梯度非常大，训练极不稳定
+
+y = x + Attention(Norm(x)) 先对输入Norm，然后计算attention，最后residual
+z = y + FFN(Norm(y)) 先对Attention 输出 Norm，然后FFN，最后residual
+
+avoid gradient explosion or disappearence
+
+### GLU gated linear Unit
+在传统的激活函数（如 ReLU）中，信息能否通过是死板的：
+如果输入 $x > 0$，信息原封不动通过。
+如果输入 $x < 0$，信息直接被“杀死”归零。
+
+而加上 Gate（门控）之后，结构变成了双分支：
+一条通道负责提取特征，
+另一条通道（Gate）负责计算一个 $0 \sim 1$ 之间的权重，用来动态决定这些特征允许通过多少。
+
+主要解决梯度消失的问题，因为ReLU把负数都 activation成0了。而通过gate让它保留一点，可以修改的
+
+GeGLU guassian error gate LU
+SwiGLU swish Sigmoid LU
+
+
+### Layer RMS Norm
+简单来说，RMSNorm 是 LayerNorm 的“精简平替版”。由于它在去掉了“减去均值（Mean）”的操作后，
+不仅性能几乎没有损失，还能带来 10% ~ 50% 的计算速度提升，因此它成为了目前现代大模型（如 LLaMA、Gemma、DeepSeek、Qwen）的绝对主流。
+
+### parallel model
+GPT-J PaLM GPT-NeoX
+
+
+### position embeddings
+sine embedding
+absolute embedding
+relative embedding
+rope： rotary position embedding
+
+### Loss after LLM pretraining done
+对于目前主流的基座模型（如 LLaMA 3、Qwen 2.5、DeepSeek 等，词表通常在 10k ~ 15k 左右），在千亿或万亿级 Token 充分跑完后：
+百亿参数以下模型（如 1B - 3B）：最终 Loss 通常收敛在 1.8 ~ 2.2 之间。
+中等参数模型（如 7B - 14B）：最终 Loss 通常收敛在 1.4 ~ 1.8 之间。
+超大参数模型（如 70B+）：最终 Loss 可以压到 1.0 ~ 1.3 左右。
+
+如果 Loss 等于 1，意味着模型在面对海量的词表（通常有几万到十几万个 Token）预测下一个词时，它已经通过上下文把正确答案锁定在一个极小的候选范围里。平均而言，它相当于在 2.7 个词（约等于 3 个词）里做单选题，且给正确答案压了 36.8% 的最高胜率。
+
+在 LLM 中，更直观的评估指标是困惑度（Perplexity, 简称 PPL e ^ Loss = 2.78
+
+### ratio in feed forward multiplier is 4
+perfect one is 8/3. so most of models just use 4
+dimensin of FF = 4 * hidden dimension
+
+### overfitting 在 LLM 训练的时候，可能不是一个需要做regularization的工作
+因为训练的数据太大，都不够重复训练一次。
+
+Dropout（Drop）和 Weight Decay 在 LLM 训练中的选择指南
+在现代 LLM（尤其是预训练）中，Dropout 用得越来越少，Weight Decay 几乎是标配。两者都是正则化手段，但作用机制和适用场景不同。
+1. Dropout（Drop）
+
+作用：训练时随机丢弃一部分神经元，防止神经元之间过度共适应（co-adaptation），提高泛化能力。
+当前主流实践：
+预训练（Pretraining）：通常关闭或设得很低（0~0.1，甚至 0）。LLM 数据量极大，几乎不会过拟合，Dropout 会显著降低训练效率（模型需要更多步数收敛）。
+微调（Fine-tuning）：推荐使用，尤其是数据量有限时。常见值 0.1 ~ 0.3（注意力层或 MLP 层可分别设置）。
+
+何时用：小模型 + 数据少、过拟合风险高的情况。
+注意：Dropout 会和 BatchNorm/LayerNorm 有一定冲突，在 Transformer 中常配合 LayerNorm 使用。
+
+2. Weight Decay（权重衰减，通常配合 AdamW）通常通过 learning rate 来控制
+
+作用：对权重施加 L2 惩罚，让权重倾向于更小的值。在 LLM 中主要不是防止过拟合，而是改善优化动态、防止权重爆炸、提升下游任务适应性（plasticity）。
+当前主流实践：
+默认值：0.1（最常用，尤其 AdamW 下）。
+预训练：0.01 ~ 0.1 常见。有些最新研究建议在 compute-optimal 规模下用更大值（0.3~1.0），能提升模型下游可塑性；过训练（更多 tokens）时可适当降低。
+微调：0.01 ~ 0.1，数据越少可适当增大。
+Llama 系列、GPT 系列等前沿模型大多采用 0.1（部分大模型如 Llama 3 405B 降到 0.01）。
+
+重要技巧：
+用 AdamW（decoupled weight decay），效果远好于传统 Adam + L2。
+通常不对 bias、LayerNorm、embedding 施加 weight decay（或单独设置很小值）。
+Weight decay 值会和 learning rate 相互影响（有效 decay ≈ lr × wd）。
+
+### slide window attention
+
+##  Linear Attention
+
+去掉/近似 Softmax，利用关联律（Associativity）：(Q·Kᵀ)·V = Q·(Kᵀ·V)。
+
+## 

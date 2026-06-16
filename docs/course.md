@@ -29,3 +29,13 @@ https://cs295.stanford.edu/
 https://github.com/jingyaogong/minimind
 
 https://github.com/jingyaogong/minimind-v
+
+
+
+
+
+## questions
+1. 在计算attention的时候，为什么不把input的d_model 按照head来split，然后计算。
+原因是GPU在计算连续内存的效率更高。
+现在流行的方法是把qkv放到一个Linear去计算
+
