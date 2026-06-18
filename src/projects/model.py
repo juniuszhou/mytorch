@@ -79,6 +79,8 @@ from jaxtyping import Bool, Float, Int, jaxtyped
 from safetensors.torch import load_file, save_file
 from torch import Tensor
 
+from projects.config import LLMTrainingConfig
+
 MODEL_PATH = "models/"
 logger = logging.getLogger(__name__)
 
@@ -86,16 +88,26 @@ logger = logging.getLogger(__name__)
 def _model_config_dict(model: TransformerLM) -> dict:
     return {
         "model_type": "transformer_lm",
-        **TransformerLMConfig(
-            vocab_size=model.vocab_size,
-            context_length=model.context_length,
-            d_model=model.d_model,
-            num_layers=model.num_layers,
-            num_heads=model.num_heads,
-            d_ff=model.d_ff,
-            rope_theta=model.rope_theta,
-        ).to_dict(),
+        "vocab_size": model.vocab_size,
+        "context_length": model.context_length,
+        "hidden_size": model.d_model,
+        "num_hidden_layers": model.num_layers,
+        "num_heads": model.num_heads,
+        "d_ff": model.d_ff,
+        "rope_theta": model.rope_theta,
     }
+
+
+def _config_from_checkpoint_dict(config: dict) -> LLMTrainingConfig:
+    return LLMTrainingConfig(
+        vocab_size=config["vocab_size"],
+        context_length=config["context_length"],
+        hidden_size=config.get("hidden_size", config.get("d_model")),
+        num_hidden_layers=config.get("num_hidden_layers", config.get("num_layers")),
+        num_heads=config["num_heads"],
+        d_ff=config["d_ff"],
+        rope_theta=config["rope_theta"],
+    )
 
 
 def save_model_safe(model: TransformerLM, name: str = "checkpoint") -> None:
@@ -128,7 +140,7 @@ def load_model_safe(
         config = json.load(handle)
     config.pop("model_type", None)
 
-    model = TransformerLM(**config)
+    model = TransformerLM(_config_from_checkpoint_dict(config))
     state_dict = load_file(weights_path, device=str(device))
     model.load_state_dict(state_dict)
     return model
@@ -281,7 +293,14 @@ class FeedForwardModel(nn.Module):
 
 
 class TransformerBlock(nn.Module):
-    def __init__(self, num_heads: int, d_model: int, d_ff: int, rope_theta: float):
+    def __init__(
+        self,
+        num_heads: int,
+        d_model: int,
+        d_ff: int,
+        rope_theta: float,
+        dropout: float = 0.1,
+    ):
         super().__init__()
         self.num_heads = num_heads
         self.d_model = d_model
@@ -290,83 +309,51 @@ class TransformerBlock(nn.Module):
 
         self.attention = DecoderModel(num_heads, d_model, rope_theta)
         self.feed_forward = FeedForwardModel(d_model, d_ff)
+        self.attention_dropout = nn.Dropout(dropout)
+        self.feed_forward_dropout = nn.Dropout(dropout)
         self.norm1 = nn.RMSNorm(d_model)
         self.norm2 = nn.RMSNorm(d_model)
 
     def forward(self, x: Float[Tensor, "batch seq d_model"]):
         # norm + attention + residual
         attn_output = self.attention(self.norm1(x))
+        attn_output = self.attention_dropout(attn_output)
         x = x + attn_output
         # norm + feed forward + residual
         ff_output = self.feed_forward(self.norm2(x))
+        ff_output = self.feed_forward_dropout(ff_output)
         x = x + ff_output
         return x
 
 
-class TransformerLMConfig:
-    def __init__(
-        self,
-        vocab_size: int,
-        context_length: int,
-        d_model: int,
-        num_layers: int,
-        num_heads: int,
-        d_ff: int,
-        rope_theta: float,
-    ):
-        self.vocab_size = vocab_size
-        self.context_length = context_length
-        self.d_model = d_model
-        self.num_layers = num_layers
-        self.num_heads = num_heads
-        self.d_ff = d_ff
-        self.rope_theta = rope_theta
-
-    def to_dict(self):
-        return {
-            "vocab_size": self.vocab_size,
-            "context_length": self.context_length,
-            "d_model": self.d_model,
-            "num_layers": self.num_layers,
-            "num_heads": self.num_heads,
-            "d_ff": self.d_ff,
-            "rope_theta": self.rope_theta,
-        }
-
-    @staticmethod
-    def from_dict(config_dict: dict):
-        return TransformerLMConfig(**config_dict)
-
-
-# class TransformerLM(PreTrainedModel, GenerationMixin):
 class TransformerLM(nn.Module):
-    def __init__(
-        self,
-        vocab_size: int,
-        context_length: int,
-        d_model: int,
-        num_layers: int,
-        num_heads: int,
-        d_ff: int,
-        rope_theta: float,
-    ):
+    def __init__(self, config: LLMTrainingConfig):
         super().__init__()
-        self.vocab_size = vocab_size
-        self.context_length = context_length
-        self.d_model = d_model
-        self.num_layers = num_layers
-        self.num_heads = num_heads
-        self.d_ff = d_ff
-        self.rope_theta = rope_theta
+        self.vocab_size = config.vocab_size
+        self.context_length = config.context_length
+        self.d_model = config.hidden_size
+        self.num_layers = config.num_hidden_layers
+        self.num_heads = config.num_heads
+        self.d_ff = config.d_ff
+        self.rope_theta = config.rope_theta
 
-        self.embed = nn.Embedding(vocab_size, d_model)
-
+        self.embed = nn.Embedding(self.vocab_size, self.d_model)
         self.layers = nn.ModuleList([
-            TransformerBlock(num_heads, d_model, d_ff, rope_theta)
-            for _ in range(num_layers)
+            TransformerBlock(self.num_heads, self.d_model, self.d_ff, self.rope_theta)
+            for _ in range(self.num_layers)
         ])
-        self.norm = nn.RMSNorm(d_model)
-        self.lm_head = nn.Linear(d_model, vocab_size, bias=False)
+        self.norm = nn.RMSNorm(self.d_model)
+        self.lm_head = nn.Linear(self.d_model, self.vocab_size, bias=False)
+        self._init_weights()
+
+    def _init_weights(self) -> None:
+        nn.init.normal_(self.embed.weight, mean=0.0, std=0.02)
+        nn.init.normal_(self.lm_head.weight, mean=0.0, std=0.02)
+        for module in self.modules():
+            if isinstance(module, nn.Linear):
+                nn.init.normal_(module.weight, mean=0.0, std=0.02)
+                if module.bias is not None:
+                    nn.init.zeros_(module.bias)
 
     def forward(self, input_ids: Int[Tensor, "batch seq"]):
         x: Float[Tensor, "batch seq d_model"] = self.embed(input_ids)
